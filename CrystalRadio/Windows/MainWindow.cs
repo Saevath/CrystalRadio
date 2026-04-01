@@ -152,10 +152,6 @@ public class MainWindow : Window, IDisposable
         if (ImGui.Button("Stop", new Vector2(100, 0)) && radioService.CurrentState != PlaybackState.Stopped)
             radioService.Stop();
 
-        ImGui.SameLine();
-        ImGui.Spacing();
-        ImGui.SameLine();
-
         DrawCurrentStationIcon();
     }
 
@@ -186,23 +182,20 @@ public class MainWindow : Window, IDisposable
     private void DrawCurrentStationIcon()
     {
         var currentStation = radioService.CurrentStation;
-        if (currentStation == null || string.IsNullOrEmpty(currentStation.IconUrl))
-        {
-            ImGui.Dummy(new Vector2(150, 150));
+        if (currentStation == null || string.IsNullOrWhiteSpace(currentStation.IconUrl))
             return;
-        }
 
         if (!imageCache.ContainsKey(currentStation.IconUrl))
         {
             LoadImageForStation(currentStation);
-            ImGui.Dummy(new Vector2(150, 150));
             return;
         }
 
         if (imageCache.TryGetValue(currentStation.IconUrl, out var texture) && texture != null)
-            ImGui.Image(texture.Handle, new Vector2(150, 150));
-        else
-            ImGui.Dummy(new Vector2(150, 150));
+        {
+            ImGui.SameLine();
+            ImGui.Image(texture.Handle, new Vector2(64, 64));
+        }
     }
 
     private void DrawVolumeControl()
@@ -386,8 +379,11 @@ public class MainWindow : Window, IDisposable
         if (isCurrentStation)
             ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(0.2f, 0.5f, 0.2f, 1f));
 
+        var starButtonWidth = 40f;
+        var stationButtonWidth = Math.Max(1f, ImGui.GetContentRegionAvail().X - starButtonWidth - ImGui.GetStyle().ItemSpacing.X);
+
         var stationLabel = $"{(isFavorite ? "★" : " ")} {station.Name}";
-        if (ImGui.Button(stationLabel, new Vector2(-45, 0)))
+        if (ImGui.Button(stationLabel, new Vector2(stationButtonWidth, 0)))
             _ = radioService.PlayStationAsync(station);
 
         var isStationHovered = ImGui.IsItemHovered();
@@ -395,12 +391,11 @@ public class MainWindow : Window, IDisposable
         if (isCurrentStation)
             ImGui.PopStyleColor();
 
-        ImGui.TextDisabled($"{station.Source}{(string.IsNullOrWhiteSpace(station.Genre) ? string.Empty : $" | {station.Genre}")}");
         ImGui.SameLine();
 
         if (isFavorite)
         {
-            if (ImGui.Button("★##favorite", new Vector2(40, 0)))
+            if (ImGui.Button("★##favorite", new Vector2(starButtonWidth, 0)))
             {
                 radioService.RemoveFavorite(station);
                 RefreshFavoriteDisplay();
@@ -418,7 +413,7 @@ public class MainWindow : Window, IDisposable
         }
         else
         {
-            if (ImGui.Button("☆##favorite", new Vector2(40, 0)))
+            if (ImGui.Button("☆##favorite", new Vector2(starButtonWidth, 0)))
             {
                 radioService.AddFavorite(station);
                 RefreshFavoriteDisplay();
@@ -435,11 +430,35 @@ public class MainWindow : Window, IDisposable
             }
         }
 
+        // Tooltip with detailed info
         if (isStationHovered)
         {
-            var genre = station.Genre.Length > 100 ? station.Genre[..100] + "..." : station.Genre;
-            var tooltipText = $"{genre}\n{station.Country} - {station.Language}";
-            ImGui.SetTooltip(tooltipText);
+            ImGui.BeginTooltip();
+
+            ImGui.TextUnformatted(station.Name);
+
+            if (!string.IsNullOrWhiteSpace(station.Source))
+                ImGui.TextDisabled($"Source: {station.Source}");
+
+            if (!string.IsNullOrWhiteSpace(station.Genre))
+                ImGui.TextDisabled($"Genre: {station.Genre}");
+
+            if (!string.IsNullOrWhiteSpace(station.Country) || !string.IsNullOrWhiteSpace(station.Language))
+            {
+                var location = $"{station.Country}";
+                if (!string.IsNullOrWhiteSpace(station.Language))
+                    location += $" - {station.Language}";
+
+                ImGui.TextDisabled(location);
+            }
+
+            if (!string.IsNullOrWhiteSpace(station.Description))
+            {
+                ImGui.Separator();
+                ImGui.TextWrapped(station.Description);
+            }
+
+            ImGui.EndTooltip();
         }
 
         ImGui.PopID();

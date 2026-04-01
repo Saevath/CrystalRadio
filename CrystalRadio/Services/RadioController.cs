@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using CrystalRadio.Audio;
@@ -65,6 +66,7 @@ public class RadioController : IRadioService, IDisposable
             _favoriteIds.Add(id);
 
         ReloadCustomStations();
+        LoadFavoriteStationsFromConfiguration();
     }
 
     public void Dispose()
@@ -99,6 +101,62 @@ public class RadioController : IRadioService, IDisposable
             if (station.IsFavorite)
                 _favoriteStations[station.Id] = station;
         }
+    }
+
+    private void LoadFavoriteStationsFromConfiguration()
+    {
+        _favoriteStations.Clear();
+
+        foreach (var favorite in _configuration.FavoriteStations)
+        {
+            if (string.IsNullOrWhiteSpace(favorite.Id) ||
+                string.IsNullOrWhiteSpace(favorite.Name) ||
+                string.IsNullOrWhiteSpace(favorite.StreamUrl))
+            {
+                continue;
+            }
+
+            _favoriteStations[favorite.Id] = new RadioStation
+            {
+                Id = favorite.Id,
+                Name = favorite.Name,
+                StreamUrl = favorite.StreamUrl,
+                Genre = favorite.Genre,
+                Description = favorite.Description,
+                Country = favorite.Country,
+                Language = favorite.Language,
+                IconUrl = favorite.IconUrl,
+                WebsiteUrl = favorite.WebsiteUrl,
+                IsFavorite = true,
+                IsCustom = favorite.IsCustom,
+                Source = favorite.Source
+            };
+        }
+    }
+
+    private void SaveFavoriteStationsToConfiguration()
+    {
+        _configuration.FavoriteStationIds = _favoriteIds.OrderBy(x => x).ToList();
+
+        _configuration.FavoriteStations = _favoriteStations.Values
+            .OrderBy(x => x.Name)
+            .Select(x => new FavoriteStationConfig
+            {
+                Id = x.Id,
+                Name = x.Name,
+                StreamUrl = x.StreamUrl,
+                Genre = x.Genre,
+                Description = x.Description,
+                Country = x.Country,
+                Language = x.Language,
+                IconUrl = x.IconUrl,
+                WebsiteUrl = x.WebsiteUrl,
+                IsCustom = x.IsCustom,
+                Source = x.Source
+            })
+            .ToList();
+
+        _configuration.Save();
     }
 
     public async Task LoadStationsAsync()
@@ -140,6 +198,7 @@ public class RadioController : IRadioService, IDisposable
             }
 
             RefreshFavoriteReferencesFromStations();
+            SaveFavoriteStationsToConfiguration();
         }
         catch (Exception ex)
         {
@@ -161,39 +220,38 @@ public class RadioController : IRadioService, IDisposable
 
     private List<RadioStation> ParseStationsJson(string json)
     {
-        var stations = new List<RadioStation>();
-
-        var stationPattern =
-            @"\{[^{}]*""stationuuid"":""([^""]*)""[^{}]*""name"":""([^""]*)""[^{}]*""url_resolved"":""([^""]*)""[^{}]*""tags"":""([^""]*)""[^{}]*""country"":""([^""]*)""[^{}]*""language"":""([^""]*)""[^{}]*(?:""favicon"":""([^""]*)"")?[^{}]*\}";
-
-        var matches = System.Text.RegularExpressions.Regex.Matches(json, stationPattern);
-
-        foreach (System.Text.RegularExpressions.Match match in matches)
+        try
         {
-            if (match.Groups.Count < 7)
-                continue;
-
-            var station = new RadioStation
+            var options = new JsonSerializerOptions
             {
-                Id = match.Groups[1].Value,
-                Name = System.Web.HttpUtility.HtmlDecode(match.Groups[2].Value),
-                StreamUrl = match.Groups[3].Value.Replace(@"\/", "/"),
-                Genre = System.Web.HttpUtility.HtmlDecode(match.Groups[4].Value),
-                Country = System.Web.HttpUtility.HtmlDecode(match.Groups[5].Value),
-                Language = System.Web.HttpUtility.HtmlDecode(match.Groups[6].Value),
-                IconUrl = match.Groups.Count > 7 ? match.Groups[7].Value.Replace(@"\/", "/") : null,
-                Source = "Radio Browser"
+                PropertyNameCaseInsensitive = true
             };
 
-            if (!string.IsNullOrWhiteSpace(station.Id) &&
-                !string.IsNullOrWhiteSpace(station.Name) &&
-                !string.IsNullOrWhiteSpace(station.StreamUrl))
-            {
-                stations.Add(station);
-            }
-        }
+            var dtoList = JsonSerializer.Deserialize<List<RadioBrowserStationDto>>(json, options) ?? new();
 
-        return stations;
+            return dtoList
+                .Where(x => !string.IsNullOrWhiteSpace(x.stationuuid) &&
+                            !string.IsNullOrWhiteSpace(x.name) &&
+                            !string.IsNullOrWhiteSpace(x.url_resolved))
+                .Select(x => new RadioStation
+                {
+                    Id = x.stationuuid ?? string.Empty,
+                    Name = x.name ?? string.Empty,
+                    StreamUrl = x.url_resolved ?? string.Empty,
+                    Genre = x.tags ?? string.Empty,
+                    Country = x.country ?? string.Empty,
+                    Language = x.language ?? string.Empty,
+                    IconUrl = string.IsNullOrWhiteSpace(x.favicon) ? null : x.favicon,
+                    WebsiteUrl = string.IsNullOrWhiteSpace(x.homepage) ? null : x.homepage,
+                    Description = string.Empty,
+                    Source = "Radio Browser"
+                })
+                .ToList();
+        }
+        catch
+        {
+            return new List<RadioStation>();
+        }
     }
 
     public IEnumerable<RadioStation> SearchStations(string query)
@@ -237,6 +295,8 @@ public class RadioController : IRadioService, IDisposable
                 if (station.IsFavorite)
                     _favoriteStations[station.Id] = station;
             }
+
+            SaveFavoriteStationsToConfiguration();
 
             return localCustomResults
                 .Concat(stations)
@@ -336,8 +396,7 @@ public class RadioController : IRadioService, IDisposable
         {
             station.IsFavorite = true;
             _favoriteStations[station.Id] = station;
-            _configuration.FavoriteStationIds = _favoriteIds.ToList();
-            _configuration.Save();
+            SaveFavoriteStationsToConfiguration();
         }
     }
 
@@ -347,8 +406,7 @@ public class RadioController : IRadioService, IDisposable
         {
             station.IsFavorite = false;
             _favoriteStations.Remove(station.Id);
-            _configuration.FavoriteStationIds = _favoriteIds.ToList();
-            _configuration.Save();
+            SaveFavoriteStationsToConfiguration();
         }
     }
 
@@ -474,5 +532,17 @@ public class RadioController : IRadioService, IDisposable
                 }
             }
         }
+    }
+
+    private sealed class RadioBrowserStationDto
+    {
+        public string? stationuuid { get; set; }
+        public string? name { get; set; }
+        public string? url_resolved { get; set; }
+        public string? tags { get; set; }
+        public string? country { get; set; }
+        public string? language { get; set; }
+        public string? favicon { get; set; }
+        public string? homepage { get; set; }
     }
 }
